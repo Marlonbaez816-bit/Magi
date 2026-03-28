@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>PurpleDrop Pro</title>
+    <script src="https://unpkg.com"></script>
+    <style>
+        :root { --p: #a855f7; --bg: #0b0e14; --w: #ffffff; --glass: rgba(30, 41, 59, 0.7); }
+        body { margin: 0; background: var(--bg); color: var(--w); font-family: -apple-system, sans-serif; overflow: hidden; height: 100vh; }
+        
+        /* Splash Moderno */
+        #splash { position: fixed; inset: 0; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 1000; transition: 0.8s; }
+        .octocat { width: 100px; height: 100px; background: url('https://github.githubassets.com') no-repeat center/contain; filter: invert(45%) sepia(93%) saturate(1450%) hue-rotate(245deg); animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { transform: scale(1); opacity: 0.7; } 50% { transform: scale(1.1); opacity: 1; } }
+
+        /* Chat con Efecto de Choque */
+        #chat { height: 70vh; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; padding-bottom: 150px; }
+        .msg { padding: 12px; border-radius: 18px; max-width: 80%; animation: clash 0.4s cubic-bezier(0.18, 0.89, 0.32, 1.28); border: 1px solid rgba(168, 85, 247, 0.2); position: relative; }
+        @keyframes clash { 0% { transform: translateY(30px) scale(0.9); opacity: 0; } 100% { transform: translateY(0) scale(1); opacity: 1; } }
+        .sent { align-self: flex-end; background: var(--p); box-shadow: 0 4px 15px rgba(168, 85, 247, 0.3); }
+        .received { align-self: flex-start; background: #1e293b; }
+
+        /* Previsualización de Multimedia */
+        .media-content { width: 100%; border-radius: 12px; margin-top: 5px; display: block; }
+        #preview-area { display: none; padding: 10px; background: var(--glass); border-top: 1px solid var(--p); backdrop-filter: blur(10px); }
+        #preview-img, #preview-vid { max-height: 100px; border-radius: 8px; border: 1px solid var(--p); }
+
+        /* Controles Futuristas */
+        .controls { position: fixed; bottom: 0; width: 100%; background: var(--glass); backdrop-filter: blur(15px); padding: 15px; box-sizing: border-box; border-top: 1px solid rgba(168, 85, 247, 0.3); }
+        .row { display: flex; gap: 10px; align-items: center; }
+        input[type="text"] { background: rgba(255,255,255,0.05); border: 1px solid var(--p); color: #fff; padding: 12px; border-radius: 20px; flex: 1; outline: none; }
+        .btn-icon { background: none; border: 1px solid var(--p); color: var(--p); border-radius: 50%; width: 40px; height: 40px; font-size: 20px; display: flex; align-items: center; justify-content: center; }
+        .btn-send { background: var(--p); border: none; color: white; border-radius: 50%; width: 45px; height: 45px; font-weight: bold; }
+        
+        #big-emoji { position: fixed; top: 40%; left: 50%; transform: translate(-50%, -50%); font-size: 150px; opacity: 0; pointer-events: none; transition: 0.5s; z-index: 900; }
+        .emoji-show { opacity: 0.5 !important; transform: translate(-50%, -50%) scale(1.4) !important; }
+    </style>
+</head>
+<body onclick="startApp()">
+
+<div id="splash">
+    <div class="octocat"></div>
+    <h2 style="color: var(--p); letter-spacing: 2px;">PURPLE DROP</h2>
+</div>
+
+<div id="big-emoji">❤️</div>
+
+<div id="chat"></div>
+
+<div id="preview-area">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+        <img id="preview-img" style="display:none">
+        <video id="preview-vid" style="display:none" muted></video>
+        <button onclick="cancelPreview()" style="background:red; color:white; border:none; border-radius:50%; width:25px; height:25px;">×</button>
+    </div>
+</div>
+
+<div class="controls">
+    <div id="status" style="font-size: 10px; color: var(--p); margin-bottom: 5px;">CONECTANDO...</div>
+    <div class="row">
+        <button class="btn-icon" onclick="document.getElementById('file-in').click()">+</button>
+        <input type="file" id="file-in" hidden accept="image/*,video/*" onchange="handleFile(event)">
+        <input type="number" id="target-id" placeholder="ID 4" style="width:60px; background:transparent; border:1px solid var(--p); color:white; border-radius:10px; padding:5px;">
+        <input type="text" id="msg-in" placeholder="Mensaje...">
+        <button class="btn-send" onclick="send()">↑</button>
+    </div>
+</div>
+
+<script>
+    let peer, myPin, selectedFile = null;
+    const chat = document.getElementById('chat');
+
+    function startApp() {
+        document.getElementById('splash').style.opacity = '0';
+        setTimeout(() => document.getElementById('splash').style.display = 'none', 800);
+    }
+
+    // Inicializar ID y Peer
+    myPin = localStorage.getItem('pdrop_pin') || Math.floor(1000 + Math.random() * 9000).toString();
+    localStorage.setItem('pdrop_pin', myPin);
+    document.getElementById('status').innerText = "MI ID: " + myPin;
+    peer = new Peer('pdrop-' + myPin);
+
+    // Cargar historial local al iniciar
+    window.onload = () => {
+        const history = JSON.parse(localStorage.getItem('pdrop_history') || '[]');
+        history.forEach(m => renderMsg(m.data, m.type, m.fileType));
+    };
+
+    // Recibir datos
+    peer.on('connection', conn => {
+        conn.on('data', data => {
+            saveAndShow(data.content, 'received', data.fileType);
+        });
+    });
+
+    // Manejar Archivos (Previsualizar)
+    function handleFile(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        selectedFile = file;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            document.getElementById('preview-area').style.display = 'block';
+            if (file.type.startsWith('image')) {
+                document.getElementById('preview-img').src = event.target.result;
+                document.getElementById('preview-img').style.display = 'block';
+                document.getElementById('preview-vid').style.display = 'none';
+            } else {
+                document.getElementById('preview-vid').src = event.target.result;
+                document.getElementById('preview-vid').style.display = 'block';
+                document.getElementById('preview-img').style.display = 'none';
+            }
+        };
+        reader.readAsDataURL(file);
+    }
+
+    function cancelPreview() {
+        selectedFile = null;
+        document.getElementById('preview-area').style.display = 'none';
+    }
+
+    // Enviar Mensaje o Archivo
+    function send() {
+        const tid = document.getElementById('target-id').value;
+        const txt = document.getElementById('msg-in').value;
+        if (!tid) return alert("Pon el ID de 4 dígitos");
+
+        const conn = peer.connect('pdrop-' + tid);
+        conn.on('open', () => {
+            if (selectedFile) {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const data = { content: reader.result, fileType: selectedFile.type };
+                    conn.send(data);
+                    saveAndShow(data.content, 'sent', data.fileType);
+                    cancelPreview();
+                };
+                reader.readAsDataURL(selectedFile);
+            } else if (txt) {
+                conn.send({ content: txt, fileType: 'text' });
+                saveAndShow(txt, 'sent', 'text');
+                document.getElementById('msg-in').value = '';
+            }
+        });
+    }
+
+    function saveAndShow(data, type, fileType) {
+        const history = JSON.parse(localStorage.getItem('pdrop_history') || '[]');
+        history.push({ data, type, fileType });
+        localStorage.setItem('pdrop_history', JSON.stringify(history));
+        renderMsg(data, type, fileType);
+        
+        // Efecto Emoji Gigante
+        if (fileType === 'text' && ["❤️","😍","🔥"].some(e => data.includes(e))) {
+            const b = document.getElementById('big-emoji');
+            b.innerText = data; b.classList.add('emoji-show');
+            setTimeout(() => b.classList.remove('emoji-show'), 1200);
+        }
+    }
+
+    function renderMsg(data, type, fileType) {
+        const d = document.createElement('div');
+        d.className = `msg ${type}`;
+        if (fileType === 'text') {
+            d.innerText = data;
+        } else if (fileType.startsWith('image')) {
+            d.innerHTML = `<img src="${data}" class="media-content">`;
+        } else if (fileType.startsWith('video')) {
+            d.innerHTML = `<video src="${data}" class="media-content" controls></video>`;
+        }
+        chat.appendChild(d);
+        chat.scrollTop = chat.scrollHeight;
+    }
+</script>
+</body>
+</html>
